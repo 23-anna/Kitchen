@@ -7,6 +7,6 @@ This application gets Order from the Dinning Hall application and simulates the 
 
 **Technical properties**
 
-Main language: Python3
-Framework: Django
-Additional software used in project: Docker
+- Main language: Python3
+- Framework: Django
+- Additional software used in project: Docker
