@@ -95,38 +95,55 @@ cooks = [
 
 order_list = []
 
-# @csrf_exempt
-# def index(request):
-#     dishes = []
-#     total_dishes = []
-#
-#     items = requests.get('http://127.0.0.1:8000/dinning/')
-#     tables = requests.get('http://127.0.0.1:8000/dinning/tables/')
-#     print('TABLES: ', tables.text)
-#
-#     [dishes.append(item) for item in items.text if item.isnumeric()]
-#
-#     for dish in dishes:
-#         preparation_time = foods[int(dish)]["preparation-time"]
-#         dish_name = foods[int(dish)]["name"]
-#         total_dishes.append(dish_name)
-#
-#         for i in range (1, preparation_time+1):
-#             print("{} second(s) remaining...".format(preparation_time - i))
-#             time.sleep(simulation_speed)
-#
-#     return HttpResponse('Order is ready! Dishes: {}'.format(total_dishes))
+queue_oven = []
+queue_stove = []
+
+global ready_id
+ready_id = -1
+
+global queue_id
+queue_id = 0
+@csrf_exempt
 def check_priority(order):
     global order_list
-    print('Order List', order_list)
 
     order_list.append(order)
 
     order_list = sorted(order_list, key=itemgetter('priority'), reverse=True)
-    print(order_list, end='\n')
-    print(len(order_list))
+
+@csrf_exempt
+def check_cooking_apparatus(dish_id):
+    global queue_id
+    queue_id += 1
+    sign = 0
+    for i in range(len(foods)):
+        if (foods[i]["id"] == dish_id):
+            apparatus = foods[i]["cooking-apparatus"]
+            print(dish_id, apparatus)
+            if (apparatus == "oven"):
+                queue_oven.append(queue_id)
+                print(queue_oven)
+                while (sign != 1):
+                    if (len(queue_oven) == 1):
+                        cooking(dish_id)
+                        if (queue_id in queue_oven):
+                            queue_oven.remove(queue_id)
+                        sign = 1
+            elif (apparatus == "stove"):
+                queue_stove.append(queue_id)
+                print(queue_stove)
+                while (sign != 1):
+                    if (len(queue_stove) <= 2):
+                        cooking(dish_id)
+                        if (queue_id in queue_stove):
+                            queue_stove.remove(queue_id)
+                        sign = 1
+            else:
+                cooking(dish_id)
+                pass
 
 
+@csrf_exempt
 def cook(name, rank, proficiency, dishes):
     dishes_in_progress = dishes
     cook_rank = rank
@@ -135,63 +152,66 @@ def cook(name, rank, proficiency, dishes):
 
     if (dishes_in_progress < proficiency):
         dishes_in_progress += 1
-        result = search_dish(cook_rank)
-        dish_id = result[0]
-        ready = result[1]
-        item  = result[2]
-        if (dish_id != 0):
-            cooking(dish_id)
-        if  (ready == 1):
-            headers = {'Content-Type' : 'application/json'}
-            res = {'order_id': item, 'status' : 'ready'}
-            order_list.remove(item)
-            response = requests.post('http://127.0.0.2:8000/kitchen/', data=json.dumps(res), headers = headers)
+        print(str(dishes_in_progress) + cook_name, '\n')
+        search_dish(0, cook_rank)
         dishes_in_progress -= 1
 
-def search_dish(rank):
+@csrf_exempt
+def search_dish(request, cook_rank):
+    global ready_id
+
     dish_id = 0
     dish_complexity = 0
-    item = 0
-    ready = 0
+
+    id_data = {'order_id': -2}
 
     while (dish_id == 0):
-        for i in order_list[item]['items']:
-            for f in foods:
-                if (i == foods['id']):
-                    dish_complexity = foods['complexity']
-                    if (dish_complexity == cook_rank):
-                        dish_id = i
-                        order_list[item]['items'].remove(i)
-                        if len(order_list[item]['items']) == 0:
-                            ready = 1
-                        break
-        item +=1
+        for item in order_list:
+            order_items = item['items']
+            for it in order_items:
+                for f in foods:
+                    if (it == f['id']):
+                        dish_complexity = f['complexity']
+                        if (dish_complexity == cook_rank):
+                            dish_id = it
+                            print("dish in work: " + str(dish_id))
+                            if (dish_id in item['items']):
+                                item['items'].remove(dish_id)
+                                check_cooking_apparatus(dish_id)
+                                if len(order_items) == 0:
+                                    print("Order " + str(item['id']) + " is ready!")
+                                    id_data = {'order_id': item['id']}
+                                    headers = {'Content-Type' : 'application/json'}
+                                    response = requests.post('http://127.0.0.1:8000/dinning/', data=json.dumps(id_data), headers = headers)
+                                    print("Response is sent for the order " + str(item['id']))
+                                    if (item in order_list):
+                                        order_list.remove(item)
+                            else:
+                                break
 
-    return [dish_id, ready, item]
+    return HttpResponse(id_data)
 
+
+@csrf_exempt
 def cooking(dish_id):
     preparation_time = 0
 
     for f in foods:
-        if (dish_id == foods['id']):
-            preparation_time = foods[f]['preparation-time']
+        if (dish_id == f['id']):
+            preparation_time = f['preparation-time']
             break
 
     time.sleep(preparation_time)
 
 
-
 @csrf_exempt
 def index(request):
-    # request = requests.get('http://127.0.0.1:8000/dinning/waiter/')
     if request.method == 'POST':
-        # new_json = requests.get('http://127.0.0.1:8000/dinning/waiter/').json()
-        print(Fore.RED + '++++++++++++POST+++++++++++++' + Style.RESET_ALL)
-        # print('++++++++++++POST+++++++++++++')
         received_order = json.loads(request.body.decode("utf-8"))
-        print(received_order)
+        print(str(received_order) + "received_order")
 
-        check_priority(received_order)
+        order_list_dynamics = threading.Thread(target=check_priority, name="Order Queue", args=(received_order,))
+        order_list_dynamics.start()
 
         cook1 = threading.Thread(target=cook, name=cooks[0]['name'], args=(cooks[0]['name'], cooks[0]['rank'], cooks[0]['proficiency'], 0, ))
         cook1.start()
@@ -205,14 +225,4 @@ def index(request):
         cook4 = threading.Thread(target=cook, name=cooks[3]['name'], args=(cooks[3]['name'], cooks[3]['rank'], cooks[3]['proficiency'], 0, ))
         cook4.start()
 
-    # info = requests.get('http://127.0.0.1:8000/dinning/')
-    # print(info.text)
-    # check_priority()
-    # print('ORDER', info)
-    # order_contents = requests.get('http://127.0.0.1:8000/dinning/waiter/')
-    # print(order_contents.text)
-
-    # headers = {'Content-Type' : 'application/json'}
-    # response = requests.post('http://127.0.0.1:8000/dinning/', headers = headers, data = info)
-
-    return HttpResponse('Order is ready! {}'.format('1'))
+    return HttpResponse(ready_id)
